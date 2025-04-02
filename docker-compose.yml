@@ -1,0 +1,76 @@
+version: '3.7'
+networks:
+    housing-mlops-net:
+        ipam:
+            config:
+                - subnet: 172.22.0.0/16
+services:
+    house_minio:
+        restart: always
+        image: minio/minio:latest
+        container_name: house_minio
+        ports:
+            - "9002:9000"
+            - "9003:9001"
+        networks:
+            housing-mlops-net:
+                ipv4_address: 172.22.0.9
+        env_file:
+            - .env
+        command: server /data --console-address ':9001' --address ':9000'
+        environment:
+            - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+            - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+        volumes:
+            - minio_data:/data
+
+    house_mlflow:
+        restart: always
+        platform: linux/amd64
+        image: ghcr.io/mlflow/mlflow:v2.3.1
+        container_name: house_mlflow
+        ports:
+            - "5002:5000"
+        networks:
+            housing-mlops-net:
+                ipv4_address: 172.22.0.4
+        env_file:
+            - .env
+        environment:
+            - S3_MLFLOW_BUCKET=${S3_MLFLOW_BUCKET}
+            - MLFLOW_S3_ENDPOINT_URL=${MLFLOW_S3_ENDPOINT_URL}
+            - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+            - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+        command: mlflow server --backend-store-uri sqlite:///mlflow.db --artifacts-destination s3://${S3_MLFLOW_BUCKET}/ --serve-artifacts --host 0.0.0.0 --default-artifact-root s3://${S3_MLFLOW_BUCKET}/
+        volumes:
+            - ./mlflow:/mlflow
+        depends_on:
+            - house_minio
+
+    house_jupyter:
+        platform: linux/amd64
+        image: jupyter/pyspark-notebook:x86_64-python-3.11
+        container_name: house_jupyter
+        ports:
+            - "8991:8888"
+        networks:
+            housing-mlops-net:
+                ipv4_address: 172.22.0.10
+        env_file:
+            - .env
+        environment:
+            - JUPYTER_ENABLE_LAB=yes
+            - PYTHONUNBUFFERED=1
+            - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
+            - MLFLOW_S3_ENDPOINT_URL=${MLFLOW_S3_ENDPOINT_URL}
+            - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+            - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+        volumes:
+            - ./:/home/jovyan/work/housing-mlops
+            - ./scripts:/home/jovyan/work/housing-mlops/scripts
+        command: bash -c "pip install -r /home/jovyan/work/housing-mlops/requirements.txt && start-notebook.sh --NotebookApp.token='' --NotebookApp.password=''"
+        depends_on:
+            - house_mlflow
+
+volumes:
+    minio_data:
